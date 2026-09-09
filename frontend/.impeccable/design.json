@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-06T00:00:00+08:00",
+  "title": "Design System: LiteCore",
+  "extensions": {
+    "colorMeta": {
+      "network-ink": { "role": "neutral", "displayName": "Network Ink", "canonical": "#172b45" },
+      "action-blue": { "role": "primary", "displayName": "Action Blue", "canonical": "#245bc1" },
+      "lab-canvas": { "role": "neutral", "displayName": "Lab Canvas", "canonical": "#f5f7fa" }
+    },
+    "motion": [
+      { "name": "state-change", "value": "180ms ease", "purpose": "Navigation and registration-state feedback." }
+    ],
+    "breakpoints": [
+      { "name": "compact", "value": "760px" },
+      { "name": "narrow", "value": "400px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary action",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single dominant action in the registration form.",
+      "html": "<button class=\"ds-button-primary\">发起注册</button>",
+      "css": ".ds-button-primary{min-height:46px;padding:.625rem .8rem;border:0;border-radius:.5rem;background:#245bc1;color:#fff;font:600 .875rem/1 Geist,sans-serif}.ds-button-primary:hover{background:#1d4ea7}.ds-button-primary:focus-visible{outline:3px solid #245bc1;outline-offset:4px}"
+    },
+    {
+      "name": "Text field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "A labeled technical input with a visible boundary.",
+      "html": "<input class=\"ds-input\" value=\"UE-DEMO-01\" aria-label=\"终端标识\">",
+      "css": ".ds-input{width:100%;min-height:44px;padding:.625rem .8rem;border:1px solid #b8c3d1;border-radius:.5rem;background:#fff;color:#202e40;font:400 .875rem/1.5 Geist,sans-serif}.ds-input:focus-visible{outline:3px solid #245bc1;outline-offset:3px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Quiet Lab Bench",
+    "overview": "An operating surface that keeps registration controls beside the network path and separates historical evidence from browser simulation.",
+    "keyCharacteristics": ["Calm daylight surfaces", "Task-first hierarchy", "Honest data labeling"],
+    "rules": [{ "name": "Evidence Color", "body": "Semantic colors always pair with text or an icon.", "section": "colors" }],
+    "dos": ["Keep the primary task and immediate response together."],
+    "donts": ["Do not imply that unverified services are online."]
+  }
+}

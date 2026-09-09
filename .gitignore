@@ -1,0 +1,15 @@
+.DS_Store
+coverage.out
+amf/amf
+smf/smf
+upf/upf
+ue/ue
+.cache/
+.run/
+.tools/
+.git-backups/
+**/node_modules/
+**/dist/
+**/.vite/
+5G-core-main.zip
+proto.zip
