@@ -2025,8 +2025,16 @@ footer {
   width: 110px;
 }
 
+.load-scenario {
+  width: 168px;
+}
+
 .load-button {
   margin-top: 0;
+}
+
+.load-export-button {
+  align-self: flex-end;
 }
 
 .load-form .field-help {
@@ -2203,6 +2211,10 @@ footer {
   }
 
   .load-input {
+    width: 100%;
+  }
+
+  .load-scenario {
     width: 100%;
   }
 

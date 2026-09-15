@@ -15,7 +15,12 @@ import { GateChecklist } from './components/GateChecklist';
 import { HealthHistoryStrip, type HealthSnapshot } from './components/HealthHistoryStrip';
 import { pct } from './components/LatencyHistogram';
 import type { LoadLatencyPoint } from './components/LatencyEvolution';
-import { LoadTestPanel, type LoadRunState, type LoadRunSummary } from './components/LoadTestPanel';
+import {
+  LoadTestPanel,
+  type LoadRunSample,
+  type LoadRunState,
+  type LoadRunSummary,
+} from './components/LoadTestPanel';
 import { PacketCurve, type PacketPoint } from './components/PacketCurve';
 import { PacketSparkline } from './components/PacketSparkline';
 import { RetryTimeline } from './components/RetryTimeline';
@@ -144,6 +149,7 @@ export default function App() {
   const [packetSeries, setPacketSeries] = useState<PacketPoint[]>([]);
   const [packetSpark, setPacketSpark] = useState<Record<string, number[]>>({});
   const [loadInputs, setLoadInputs] = useState({ concurrency: '10', total: '30' });
+  const [loadScenario, setLoadScenario] = useState<Scenario>('stable');
   const [loadState, setLoadState] = useState<LoadRunState | null>(null);
   const [loadRuns, setLoadRuns] = useState<LoadRunSummary[]>([]);
   const alive = useRef(true);
@@ -410,14 +416,19 @@ export default function App() {
     busy.current = true;
     setError('');
     const startedAt = Date.now();
+    const runId = `web-${startedAt}-${seq}`;
     const okIds: string[] = [];
     const latencyList: number[] = [];
     const pointList: LoadLatencyPoint[] = [];
+    const sampleList: LoadRunSample[] = [];
     let okCount = 0;
     let failCount = 0;
     let nextIndex = 0;
     const commit = () => {
       setLoadState({
+        runId,
+        scenario: loadScenario,
+        concurrency,
         running: true,
         total,
         done: okCount + failCount,
@@ -427,9 +438,13 @@ export default function App() {
         points: [...pointList],
         startedAt,
         cleanupFail: 0,
+        samples: [...sampleList],
       });
     };
     setLoadState({
+      runId,
+      scenario: loadScenario,
+      concurrency,
       running: true,
       total,
       done: 0,
@@ -439,17 +454,35 @@ export default function App() {
       points: [],
       startedAt,
       cleanupFail: 0,
+      samples: [],
     });
     const worker = async () => {
       for (;;) {
         const index = nextIndex++;
         if (index >= total) return;
         const id = `UE-LOAD-${seq}-${String(index + 1).padStart(3, '0')}`;
+        const requestStartedAt = performance.now();
         try {
-          const res = await apiRegister(id, scenario);
+          const res = await apiRegister(id, loadScenario);
           if (!alive.current) return;
+          const clientMs = performance.now() - requestStartedAt;
           const ms = Math.max(res.processingMs, 1);
           pointList.push({ i: index + 1, ms, ok: res.success });
+          sampleList.push({
+            index: index + 1,
+            ueId: id,
+            success: res.success,
+            retries: res.retries,
+            clientMs,
+            gatewayMs: res.gatewayMs,
+            processingMs: res.processingMs,
+            signalPower: res.signalPower,
+            sinr: res.sinr,
+            amfUeId: res.amfUeId,
+            sessionId: res.sessionId,
+            ueIp: res.ueIp,
+            message: res.message,
+          });
           if (res.success) {
             okCount += 1;
             latencyList.push(res.processingMs);
@@ -457,10 +490,23 @@ export default function App() {
           } else {
             failCount += 1;
           }
-        } catch {
+        } catch (cause) {
           if (!alive.current) return;
+          const clientMs = performance.now() - requestStartedAt;
           failCount += 1;
-          pointList.push({ i: index + 1, ms: Math.max(Date.now() - startedAt, 1), ok: false });
+          pointList.push({ i: index + 1, ms: Math.max(clientMs, 1), ok: false });
+          sampleList.push({
+            index: index + 1,
+            ueId: id,
+            success: false,
+            retries: 0,
+            clientMs,
+            gatewayMs: 0,
+            processingMs: 0,
+            signalPower: null,
+            sinr: null,
+            message: cause instanceof Error ? cause.message : '未知请求错误',
+          });
         }
         commit();
       }
@@ -492,6 +538,9 @@ export default function App() {
     };
     setLoadRuns((prev) => [...prev, summary].slice(-3));
     setLoadState({
+      runId,
+      scenario: loadScenario,
+      concurrency,
       running: false,
       total,
       done: okCount + failCount,
@@ -502,6 +551,7 @@ export default function App() {
       startedAt,
       finishedAt: Date.now(),
       cleanupFail,
+      samples: [...sampleList],
     });
     if (cleanupFail > 0) {
       setNotice(`压测完成：${cleanupFail} 个终端注销清理失败，可到「在线 UE」面板手动注销。`);
@@ -513,7 +563,7 @@ export default function App() {
       /* 列表会由轮询兜底 */
     }
     busy.current = false;
-  }, [loadInputs, mode, scenario]);
+  }, [loadInputs, loadScenario, mode]);
 
   const shownUEs = mode === 'demo' ? demoUes : ues;
   const loadBusy = !!loadState?.running;
@@ -594,7 +644,7 @@ export default function App() {
                 aria-describedby={error ? 'form-error' : undefined}
                 autoComplete="off"
               />
-              <label htmlFor="scenario">信道场景</label>
+              <label htmlFor="scenario">注册信道模型</label>
               <select
                 id="scenario"
                 className="field"
@@ -963,7 +1013,9 @@ export default function App() {
             state={loadState}
             runs={loadRuns}
             inputs={loadInputs}
+            scenario={loadScenario}
             onInput={(field, value) => setLoadInputs((prev) => ({ ...prev, [field]: value }))}
+            onScenario={setLoadScenario}
             onStart={() => void startLoadTest()}
             disabled={mode !== 'live' || running || loadBusy}
             demo={mode === 'demo'}
