@@ -144,8 +144,8 @@ type registerResult struct {
 	SignalPower  float32 `json:"signalPower"`
 	SINR         float32 `json:"sinr"`
 	Retries      int     `json:"retries"`
-	ProcessingMs int64   `json:"processingMs"`
-	GatewayMs    int64   `json:"gatewayMs"`
+	ProcessingMs float64 `json:"processingMs"`
+	GatewayMs    float64 `json:"gatewayMs"`
 	Message      string  `json:"message"`
 }
 
@@ -166,9 +166,9 @@ func (g *gateway) registerWithRetry(ueID string, sample channelSample) registerR
 				result.AMFUEID = resp.AmfUeId
 				result.SessionID = resp.SessionId
 				result.UEIP = resp.UeIp
-				result.ProcessingMs = int64(resp.ProcessingMs)
+				result.ProcessingMs = resp.ProcessingMs
 			}
-			result.GatewayMs = time.Since(started).Milliseconds()
+			result.GatewayMs = float64(time.Since(started)) / float64(time.Millisecond)
 			return result
 		}
 		result.Message = err.Error()
@@ -178,7 +178,7 @@ func (g *gateway) registerWithRetry(ueID string, sample channelSample) registerR
 		result.Retries++
 		time.Sleep(retryWait(result.Retries))
 	}
-	result.GatewayMs = time.Since(started).Milliseconds()
+	result.GatewayMs = float64(time.Since(started)) / float64(time.Millisecond)
 	return result
 }
 
@@ -293,16 +293,16 @@ func (g *gateway) forgetUE(ueID string) {
 }
 
 type ueEntry struct {
-	UEID            string `json:"ueId"`
-	AMFUEID         string `json:"amfUeId,omitempty"`
-	SessionID       string `json:"sessionId,omitempty"`
-	UEIP            string `json:"ueIp,omitempty"`
-	AMFState        string `json:"amfState,omitempty"`
-	SessionState    string `json:"sessionState,omitempty"`
-	RuleID          string `json:"ruleId,omitempty"`
+	UEID             string `json:"ueId"`
+	AMFUEID          string `json:"amfUeId,omitempty"`
+	SessionID        string `json:"sessionId,omitempty"`
+	UEIP             string `json:"ueIp,omitempty"`
+	AMFState         string `json:"amfState,omitempty"`
+	SessionState     string `json:"sessionState,omitempty"`
+	RuleID           string `json:"ruleId,omitempty"`
 	PacketsForwarded uint64 `json:"packetsForwarded"`
-	Active          bool   `json:"active"`
-	RegisteredAt    string `json:"registeredAt,omitempty"`
+	Active           bool   `json:"active"`
+	RegisteredAt     string `json:"registeredAt,omitempty"`
 }
 
 func (g *gateway) handleListUEs(w http.ResponseWriter, _ *http.Request) {
