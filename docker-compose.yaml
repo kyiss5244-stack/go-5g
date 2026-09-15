@@ -1,6 +1,17 @@
 name: litecore
 
 services:
+  controller:
+    build:
+      context: .
+      dockerfile: controller/Dockerfile
+    image: litecore-controller:latest
+    environment:
+      COMPOSE_PROJECT_NAME: litecore
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+
   upf:
     build:
       context: .
@@ -60,10 +71,13 @@ services:
       AMF_ADDRESS: amf:50051
       SMF_ADDRESS: smf:50052
       UPF_ADDRESS: upf:50053
+      CONTROL_ADDRESS: http://controller:8090
     ports: ["8080:8080"]
     depends_on:
       amf:
         condition: service_healthy
+      controller:
+        condition: service_started
     healthcheck:
       test: ["CMD", "nc", "-z", "127.0.0.1", "8080"]
       interval: 3s

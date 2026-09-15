@@ -22,6 +22,7 @@ import (
 	"os/signal"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -32,6 +33,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -78,18 +80,21 @@ func sampleChannel(scenario string, rng *rand.Rand) channelSample {
 func round2(value float32) float32 { return float32(math.Round(float64(value)*100)) / 100 }
 
 type gateway struct {
-	mu         sync.RWMutex
-	known      map[string]time.Time // key:ue_id → 注册成功时间。AMF 无 List 接口，网关自记"见过谁"
-	amfClient  amfpb.AMFServiceClient
-	smfClient  smfpb.SMFServiceClient
-	upfClient  upfpb.UPFServiceClient
-	amfHealth  healthpb.HealthClient
-	smfHealth  healthpb.HealthClient
-	upfHealth  healthpb.HealthClient
-	amfAddress string
-	smfAddress string
-	upfAddress string
-	rng        *rand.Rand
+	mu             sync.RWMutex
+	known          map[string]time.Time // key:ue_id → 注册成功时间。AMF 无 List 接口，网关自记"见过谁"
+	amfClient      amfpb.AMFServiceClient
+	smfClient      smfpb.SMFServiceClient
+	upfClient      upfpb.UPFServiceClient
+	amfHealth      healthpb.HealthClient
+	smfHealth      healthpb.HealthClient
+	upfHealth      healthpb.HealthClient
+	amfAddress     string
+	smfAddress     string
+	upfAddress     string
+	controlAddress string
+	controlClient  *http.Client
+	nextRequest    atomic.Uint64
+	rng            *rand.Rand
 }
 
 func newGateway() *gateway {
@@ -105,17 +110,19 @@ func newGateway() *gateway {
 		return conn
 	}
 	return &gateway{
-		known:      make(map[string]time.Time),
-		amfClient:  amfpb.NewAMFServiceClient(dial(amfAddress)),
-		smfClient:  smfpb.NewSMFServiceClient(dial(smfAddress)),
-		upfClient:  upfpb.NewUPFServiceClient(dial(upfAddress)),
-		amfHealth:  healthpb.NewHealthClient(dial(amfAddress)),
-		smfHealth:  healthpb.NewHealthClient(dial(smfAddress)),
-		upfHealth:  healthpb.NewHealthClient(dial(upfAddress)),
-		amfAddress: amfAddress,
-		smfAddress: smfAddress,
-		upfAddress: upfAddress,
-		rng:        rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(os.Getpid()))),
+		known:          make(map[string]time.Time),
+		amfClient:      amfpb.NewAMFServiceClient(dial(amfAddress)),
+		smfClient:      smfpb.NewSMFServiceClient(dial(smfAddress)),
+		upfClient:      upfpb.NewUPFServiceClient(dial(upfAddress)),
+		amfHealth:      healthpb.NewHealthClient(dial(amfAddress)),
+		smfHealth:      healthpb.NewHealthClient(dial(smfAddress)),
+		upfHealth:      healthpb.NewHealthClient(dial(upfAddress)),
+		amfAddress:     amfAddress,
+		smfAddress:     smfAddress,
+		upfAddress:     upfAddress,
+		controlAddress: env("CONTROL_ADDRESS", "http://localhost:8090"),
+		controlClient:  &http.Client{Timeout: 15 * time.Second},
+		rng:            rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(os.Getpid()))),
 	}
 }
 
@@ -149,12 +156,13 @@ type registerResult struct {
 	Message      string  `json:"message"`
 }
 
-func (g *gateway) registerWithRetry(ueID string, sample channelSample) registerResult {
+func (g *gateway) registerWithRetry(parent context.Context, requestID, ueID string, sample channelSample) registerResult {
 	started := time.Now()
+	parent = metadata.AppendToOutgoingContext(parent, "x-request-id", requestID)
 	result := registerResult{UEID: ueID, SignalPower: round2(sample.SignalPower), SINR: round2(sample.SINR)}
 	request := &amfpb.RegisterRequest{UeId: ueID, UeType: "web", SignalPower: sample.SignalPower, Sinr: sample.SINR}
 	for attempt := 0; attempt <= maxRegistrationRetries; attempt++ {
-		ctx, cancel := context.WithTimeout(context.Background(), defaultRPCTimeout)
+		ctx, cancel := context.WithTimeout(parent, defaultRPCTimeout)
 		resp, err := g.amfClient.Register(ctx, request)
 		cancel()
 		if err == nil {
@@ -172,11 +180,23 @@ func (g *gateway) registerWithRetry(ueID string, sample channelSample) registerR
 			return result
 		}
 		result.Message = err.Error()
+		if parent.Err() != nil {
+			result.Message = "注册请求已由 UE 取消"
+			break
+		}
 		if attempt == maxRegistrationRetries || !isRetryableRegistrationError(err) {
 			break
 		}
 		result.Retries++
-		time.Sleep(retryWait(result.Retries))
+		timer := time.NewTimer(retryWait(result.Retries))
+		select {
+		case <-parent.Done():
+			timer.Stop()
+			result.Message = "注册请求已由 UE 取消"
+			result.GatewayMs = float64(time.Since(started)) / float64(time.Millisecond)
+			return result
+		case <-timer.C:
+		}
 	}
 	result.GatewayMs = float64(time.Since(started)) / float64(time.Millisecond)
 	return result
@@ -214,14 +234,16 @@ func (g *gateway) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "请选择有效的信道场景")
 		return
 	}
-	result := g.registerWithRetry(body.UEID, sampleChannel(body.Scenario, g.rng))
+	requestID := fmt.Sprintf("reg-%d-%d", time.Now().UnixMilli(), g.nextRequest.Add(1))
+	w.Header().Set("X-Request-ID", requestID)
+	result := g.registerWithRetry(r.Context(), requestID, body.UEID, sampleChannel(body.Scenario, g.rng))
 	if result.Success {
 		g.mu.Lock()
 		g.known[body.UEID] = time.Now()
 		g.mu.Unlock()
-		log.Printf("注册成功 ue_id=%s amf_ue_id=%s session_id=%s ue_ip=%s", body.UEID, result.AMFUEID, result.SessionID, result.UEIP)
+		log.Printf("注册成功 request_id=%s ue_id=%s amf_ue_id=%s session_id=%s ue_ip=%s", requestID, body.UEID, result.AMFUEID, result.SessionID, result.UEIP)
 	} else {
-		log.Printf("注册失败 ue_id=%s retries=%d message=%s", body.UEID, result.Retries, result.Message)
+		log.Printf("注册失败 request_id=%s ue_id=%s retries=%d message=%s", requestID, body.UEID, result.Retries, result.Message)
 	}
 	writeJSON(w, http.StatusOK, result)
 }
@@ -386,6 +408,42 @@ func (g *gateway) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
+var controllableNodes = map[string]bool{"amf": true, "smf": true, "upf": true}
+
+// handleNodeControl 把固定的网元操作转交给 Compose 内网控制器。浏览器不能传入
+// 容器名、Docker 路径或任意命令，网关只接受三种已知网元与四种已知动作。
+func (g *gateway) handleNodeControl(w http.ResponseWriter, r *http.Request) {
+	node := r.PathValue("node")
+	action := r.PathValue("action")
+	if !controllableNodes[node] {
+		writeError(w, http.StatusNotFound, "未知网元")
+		return
+	}
+	if (r.Method == http.MethodGet && action != "status" && action != "logs") ||
+		(r.Method == http.MethodPost && action != "start" && action != "stop") {
+		writeError(w, http.StatusMethodNotAllowed, "不支持的网元操作")
+		return
+	}
+	target := g.controlAddress + "/services/" + node + "/" + action
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, target, nil)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "无法创建控制请求")
+		return
+	}
+	resp, err := g.controlClient.Do(req)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "容器控制器不可用，请检查 Docker Compose")
+		return
+	}
+	defer resp.Body.Close()
+	var payload any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		writeError(w, http.StatusBadGateway, "容器控制器返回了无效响应")
+		return
+	}
+	writeJSON(w, resp.StatusCode, payload)
+}
+
 // ---------- 中间件 ----------
 
 // isLocalOrigin 只放行本机网页（localhost/127.0.0.1，任意端口），
@@ -432,6 +490,8 @@ func main() {
 	mux.HandleFunc("GET /api/ues", g.handleListUEs)
 	mux.HandleFunc("POST /api/register", g.handleRegister)
 	mux.HandleFunc("POST /api/deregister", g.handleDeregister)
+	mux.HandleFunc("GET /api/nodes/{node}/{action}", g.handleNodeControl)
+	mux.HandleFunc("POST /api/nodes/{node}/{action}", g.handleNodeControl)
 
 	listenAddress := env("GATEWAY_ADDRESS", ":8080")
 	server := &http.Server{Addr: listenAddress, Handler: requestLog(cors(mux))}

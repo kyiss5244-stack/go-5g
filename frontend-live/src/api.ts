@@ -48,16 +48,24 @@ export class ApiError extends Error {}
 
 async function request<T>(path: string, init?: RequestInit, timeoutMs = 6000): Promise<T> {
   const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  let timedOut = false;
+  const externalSignal = init?.signal;
+  const forwardAbort = () => controller.abort();
+  externalSignal?.addEventListener('abort', forwardAbort, { once: true });
+  const timer = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
   let data: T & { error?: string };
   try {
     const response = await fetch(`${API_BASE}${path}`, { ...init, signal: controller.signal });
     data = (await response.json()) as T & { error?: string };
   } catch (cause) {
     const aborted = cause instanceof DOMException && cause.name === 'AbortError';
-    throw new ApiError(aborted ? '请求超时，网关没有回应' : '连不上网关（:8080）');
+    throw new ApiError(aborted ? (timedOut ? '请求超时，网关没有回应' : '注册请求已停止') : '连不上网关（:8080）');
   } finally {
     window.clearTimeout(timer);
+    externalSignal?.removeEventListener('abort', forwardAbort);
   }
   if (data && typeof data === 'object' && typeof data.error === 'string') {
     throw new ApiError(data.error);
@@ -70,12 +78,35 @@ export function apiHealth(): Promise<Health> {
 }
 
 // 注册在网关内部可能带重试（最多 2 次，每次最长 4 秒），给足超时。
-export function apiRegister(ueId: string, scenario: Scenario): Promise<RegisterResult> {
+export function apiRegister(ueId: string, scenario: Scenario, signal?: AbortSignal): Promise<RegisterResult> {
   return request<RegisterResult>(
     '/api/register',
-    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ueId, scenario }) },
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ueId, scenario }), signal },
     20000,
   );
+}
+
+export type NodeId = 'UE' | 'AMF' | 'SMF' | 'UPF';
+export type ServiceNodeId = Exclude<NodeId, 'UE'>;
+export type NodeStatus = {
+  service: string;
+  container: string;
+  status: string;
+  running: boolean;
+  startedAt?: string;
+  finishedAt?: string;
+};
+
+export function apiNodeStatus(node: ServiceNodeId): Promise<NodeStatus> {
+  return request<NodeStatus>(`/api/nodes/${node.toLowerCase()}/status`, undefined, 4000);
+}
+
+export function apiNodeLogs(node: ServiceNodeId): Promise<{ service: string; lines: string[] }> {
+  return request<{ service: string; lines: string[] }>(`/api/nodes/${node.toLowerCase()}/logs`, undefined, 5000);
+}
+
+export function apiNodeAction(node: ServiceNodeId, action: 'start' | 'stop'): Promise<NodeStatus> {
+  return request<NodeStatus>(`/api/nodes/${node.toLowerCase()}/${action}`, { method: 'POST' }, 15000);
 }
 
 export function apiDeregister(ueId: string): Promise<DeregisterResult> {

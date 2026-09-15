@@ -9,12 +9,11 @@ npm install
 npm run dev   # http://localhost:5173
 ```
 
-前提：`amf`、`smf`、`upf` 和 `gateway`（HTTP 网关，:8080）已经启动。可用 docker 一键起后端：
+前提：`amf`、`smf`、`upf` 和 `gateway`（HTTP 网关，:8080）已经启动。使用 Docker Compose 可同时启用网元终端的真实日志与启停控制：
 
 ```bash
 # 在仓库根目录
 docker compose up -d --build
-go run ./gateway   # 或 make gateway
 ```
 
 ## 两种模式
@@ -36,6 +35,12 @@ go run ./gateway   # 或 make gateway
 | POST | `/api/deregister` | 注销一台 UE |
 | GET | `/api/ues` | 在线终端列表（含 UPF 转发包计数） |
 | GET | `/api/health` | 网关 + AMF/SMF/UPF 健康状态 |
+| GET | `/api/nodes/{node}/status` | 读取 AMF/SMF/UPF 容器状态 |
+| GET | `/api/nodes/{node}/logs` | 读取网元最近 500 条真实容器日志 |
+| POST | `/api/nodes/{node}/start` | 启动指定网元容器 |
+| POST | `/api/nodes/{node}/stop` | 优雅停止指定网元容器 |
+
+注册路径上的四个节点都可点击打开终端。UE 终端显示浏览器请求与返回，可取消当前注册；其余终端显示对应容器日志，并可停止或重新启动服务。控制器只接受 `amf`、`smf`、`upf` 三个固定服务名，且仅在 Compose 内网访问 Docker socket。
 
 ## 构建
 

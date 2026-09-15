@@ -6,6 +6,7 @@ import {
   apiUEs,
   SCENARIOS,
   type Health,
+  type NodeId,
   type RegisterResult,
   type Scenario,
   type UEEntry,
@@ -26,6 +27,7 @@ import { PacketSparkline } from './components/PacketSparkline';
 import { RetryTimeline } from './components/RetryTimeline';
 import { SignalScatter, type ScatterSample } from './components/SignalScatter';
 import { UEResourceDetail } from './components/UEResourceDetail';
+import { NodeTerminal } from './components/NodeTerminal';
 
 type Mode = 'probing' | 'live' | 'demo';
 
@@ -142,6 +144,8 @@ export default function App() {
   const [records, setRecords] = useState<HistoryRecord[]>([]);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [activeNode, setActiveNode] = useState<NodeId | null>(null);
+  const [ueLogs, setUELogs] = useState<string[]>([]);
   // —— 可视化新增状态 ——
   const [expandedUE, setExpandedUE] = useState<string | null>(null);
   const [samples, setSamples] = useState<ScatterSample[]>([]);
@@ -163,6 +167,13 @@ export default function App() {
   const lastHealthAt = useRef(0);
   const lastPacketAt = useRef(0);
   const demoUesRef = useRef<UEEntry[]>(demoUEs());
+  const registrationAbort = useRef<AbortController | null>(null);
+
+  const appendUELog = useCallback((message: string) => {
+    const line = `${new Date().toISOString()} ${message}`;
+    setUELogs((prev) => [...prev.slice(-1999), line]);
+  }, []);
+  const closeTerminal = useCallback(() => setActiveNode(null), []);
 
   // 挂载后先敲一次网关：通了就实时模式，不通就落到演示模式。
   useEffect(() => {
@@ -313,12 +324,15 @@ export default function App() {
       setResult(null);
       setRunning(true);
       setPhase(0);
+      const abortController = new AbortController();
+      registrationAbort.current = abortController;
+      appendUELog(`请求 POST /api/register ue_id=${id} scenario=${chosen}`);
       await delay(240);
       try {
         let res: RegisterResult;
         if (mode === 'live') {
           setPhase(1);
-          res = await apiRegister(id, chosen); // 真实请求；期间动画停在 AMF 一步
+          res = await apiRegister(id, chosen, abortController.signal); // 真实请求；期间动画停在 AMF 一步
           if (!alive.current) return;
           if (res.success) {
             setPhase(2);
@@ -341,6 +355,7 @@ export default function App() {
           }
         }
         if (!alive.current) return;
+        appendUELog(`返回 success=${res.success} retries=${res.retries} message=${JSON.stringify(res.message)}${res.sessionId ? ` session_id=${res.sessionId} ue_ip=${res.ueIp}` : ''}`);
         setResult(res);
         setRecords((prev) => [{ key: nextKey.current++, r: res }, ...prev].slice(0, 6));
         setSamples((prev) => {
@@ -378,13 +393,16 @@ export default function App() {
           ]);
         }
       } catch (cause) {
-        if (alive.current) setError(cause instanceof Error ? cause.message : '出错了，再试一次。');
+        const message = cause instanceof Error ? cause.message : '出错了，再试一次。';
+        appendUELog(`错误 ${message}`);
+        if (alive.current) setError(message);
       } finally {
+        if (registrationAbort.current === abortController) registrationAbort.current = null;
         busy.current = false;
         if (alive.current) setRunning(false);
       }
     },
-    [mode, updateDemoUes],
+    [mode, updateDemoUes, appendUELog],
   );
 
   const handleDeregister = useCallback(
@@ -706,10 +724,15 @@ export default function App() {
                   .join(' ');
                 return (
                   <li key={node.id} className={cls}>
-                    <div className="node-symbol">
+                    <button
+                      className="node-symbol"
+                      type="button"
+                      aria-label={`打开 ${node.id} 终端`}
+                      onClick={() => setActiveNode(node.id)}
+                    >
                       <span>{node.id}</span>
                       {(completed || rejected) && <i className="node-result" aria-hidden="true" />}
-                    </div>
+                    </button>
                     <strong>{node.id}</strong>
                     <span>{node.name}</span>
                     <small>{node.port}</small>
@@ -1027,6 +1050,18 @@ export default function App() {
         <span>LiteCore · 轻量级 5G 核心网教学实验</span>
         <span>{mode === 'live' ? '数据来自 LiteCore 后端' : '当前显示排练数据'} · UPF 转发为模拟计数</span>
       </footer>
+      <NodeTerminal
+        activeNode={activeNode}
+        mode={mode}
+        ueRunning={running}
+        ueLogs={ueLogs}
+        onSelect={setActiveNode}
+        onClose={closeTerminal}
+        onStopUE={() => {
+          registrationAbort.current?.abort();
+          appendUELog('用户从 UE 终端停止当前注册任务');
+        }}
+      />
     </div>
   );
 }

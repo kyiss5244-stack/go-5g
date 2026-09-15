@@ -57,7 +57,7 @@ docker compose down
 
 ## 网页实验台
 
-`gateway/` 是一个薄 HTTP 网关（:8080），把后端 gRPC 能力翻译成 JSON API，业务逻辑全部留在 AMF/SMF/UPF。`frontend-live/` 是连接它的网页前端（:5173），支持实时注册演示、在线终端与包计数、健康面板，网关不可达时自动降级为演示模式。
+`gateway/` 是一个薄 HTTP 网关（:8080），把后端 gRPC 能力翻译成 JSON API，业务逻辑全部留在 AMF/SMF/UPF。`frontend-live/` 是连接它的网页前端（:5173），支持实时注册演示、在线终端与包计数、健康面板。注册路径的四个节点可打开终端查看真实请求与服务日志；Compose 模式下可停止、重新启动 AMF、SMF、UPF。网关不可达时页面自动降级为演示模式。
 
 ```bash
 # 方式一：后端跑在 Docker 里（gateway 容器也在编排内，宿主机不用再起网关）
