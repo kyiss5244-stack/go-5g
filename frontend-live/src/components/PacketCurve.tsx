@@ -26,8 +26,8 @@ export function PacketCurve({ series }: { series: PacketPoint[] }) {
 
   return (
     <svg className="viz-svg" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="聚合转发包数趋势">
-      {ticks.map((t) => (
-        <g key={t}>
+      {ticks.map((t, index) => (
+        <g key={`${index}-${t}`}>
           <line x1={PAD_L} x2={W - PAD_R} y1={y(t)} y2={y(t)} stroke="var(--border)" strokeWidth="1" strokeDasharray="3 4" />
           <text x={PAD_L - 6} y={y(t) + 3} textAnchor="end" className="tick" fill="var(--faint)">
             {t}

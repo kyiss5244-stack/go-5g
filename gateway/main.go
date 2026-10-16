@@ -95,6 +95,7 @@ type gateway struct {
 	controlClient  *http.Client
 	nextRequest    atomic.Uint64
 	rng            *rand.Rand
+	oaiDataset     *oaiDataset
 }
 
 func newGateway() *gateway {
@@ -123,6 +124,7 @@ func newGateway() *gateway {
 		controlAddress: env("CONTROL_ADDRESS", "http://localhost:8090"),
 		controlClient:  &http.Client{Timeout: 15 * time.Second},
 		rng:            rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(os.Getpid()))),
+		oaiDataset:     loadQuestDataset(defaultOAIDataPath()),
 	}
 }
 
@@ -154,6 +156,11 @@ type registerResult struct {
 	ProcessingMs float64 `json:"processingMs"`
 	GatewayMs    float64 `json:"gatewayMs"`
 	Message      string  `json:"message"`
+	InputSource  string  `json:"inputSource,omitempty"`
+	DatasetID    string  `json:"datasetId,omitempty"`
+	RecordIndex  *int    `json:"recordIndex,omitempty"`
+	SourceLine   int     `json:"sourceLine,omitempty"`
+	RNTI         string  `json:"rnti,omitempty"`
 }
 
 func (g *gateway) registerWithRetry(parent context.Context, requestID, ueID string, sample channelSample) registerResult {
@@ -220,6 +227,11 @@ func (g *gateway) handleRegister(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		UEID     string `json:"ueId"`
 		Scenario string `json:"scenario"`
+		OAI      *struct {
+			DatasetID   string   `json:"datasetId"`
+			RecordIndex *int     `json:"recordIndex"`
+			SignalPower *float64 `json:"signalPower"`
+		} `json:"oai,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "请求体不是合法 JSON")
@@ -230,18 +242,46 @@ func (g *gateway) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "请填写 1–48 个字符的终端标识")
 		return
 	}
-	if !scenarios[body.Scenario] {
-		writeError(w, http.StatusBadRequest, "请选择有效的信道场景")
-		return
+	var sample channelSample
+	var oaiRecord *oaiRecord
+	if body.OAI != nil {
+		if body.OAI.DatasetID != questDatasetID || g.oaiDataset == nil || g.oaiDataset.LoadError != "" {
+			writeError(w, http.StatusBadRequest, "请选择可用的 OAI 数据集")
+			return
+		}
+		if body.OAI.RecordIndex == nil || *body.OAI.RecordIndex < 0 || *body.OAI.RecordIndex >= len(g.oaiDataset.Records) {
+			writeError(w, http.StatusBadRequest, "OAI 记录序号无效")
+			return
+		}
+		if body.OAI.SignalPower == nil || math.IsNaN(*body.OAI.SignalPower) || math.IsInf(*body.OAI.SignalPower, 0) || *body.OAI.SignalPower < -200 || *body.OAI.SignalPower > 0 {
+			writeError(w, http.StatusBadRequest, "实验设定信号功率必须在 -200 至 0 dBm 之间")
+			return
+		}
+		record := &g.oaiDataset.Records[*body.OAI.RecordIndex]
+		oaiRecord = record
+		sample = channelSample{SignalPower: float32(*body.OAI.SignalPower), SINR: float32(record.SINRDB)}
+	} else {
+		if !scenarios[body.Scenario] {
+			writeError(w, http.StatusBadRequest, "请选择有效的信道场景")
+			return
+		}
+		sample = sampleChannel(body.Scenario, g.rng)
 	}
 	requestID := fmt.Sprintf("reg-%d-%d", time.Now().UnixMilli(), g.nextRequest.Add(1))
 	w.Header().Set("X-Request-ID", requestID)
-	result := g.registerWithRetry(r.Context(), requestID, body.UEID, sampleChannel(body.Scenario, g.rng))
+	result := g.registerWithRetry(r.Context(), requestID, body.UEID, sample)
+	if oaiRecord != nil {
+		result.InputSource = "oai"
+		result.DatasetID = body.OAI.DatasetID
+		result.RecordIndex = &oaiRecord.Index
+		result.SourceLine = oaiRecord.SourceLine
+		result.RNTI = oaiRecord.RNTI
+	}
 	if result.Success {
 		g.mu.Lock()
 		g.known[body.UEID] = time.Now()
 		g.mu.Unlock()
-		log.Printf("注册成功 request_id=%s ue_id=%s amf_ue_id=%s session_id=%s ue_ip=%s", requestID, body.UEID, result.AMFUEID, result.SessionID, result.UEIP)
+		log.Printf("注册成功 request_id=%s ue_id=%s source=%s source_line=%d amf_ue_id=%s session_id=%s ue_ip=%s", requestID, body.UEID, result.InputSource, result.SourceLine, result.AMFUEID, result.SessionID, result.UEIP)
 	} else {
 		log.Printf("注册失败 request_id=%s ue_id=%s retries=%d message=%s", requestID, body.UEID, result.Retries, result.Message)
 	}
@@ -490,6 +530,11 @@ func main() {
 	mux.HandleFunc("GET /api/ues", g.handleListUEs)
 	mux.HandleFunc("POST /api/register", g.handleRegister)
 	mux.HandleFunc("POST /api/deregister", g.handleDeregister)
+	mux.HandleFunc("GET /api/oai/datasets", g.handleOAIDatasets)
+	mux.HandleFunc("GET /api/oai/datasets/{id}", g.handleOAIDataset)
+	mux.HandleFunc("GET /api/oai/datasets/{id}/records", g.handleOAIRecords)
+	mux.HandleFunc("GET /api/oai/datasets/{id}/series", g.handleOAISeries)
+	mux.HandleFunc("GET /api/oai/datasets/{id}/export", g.handleOAIExport)
 	mux.HandleFunc("GET /api/nodes/{node}/{action}", g.handleNodeControl)
 	mux.HandleFunc("POST /api/nodes/{node}/{action}", g.handleNodeControl)
 

@@ -2,11 +2,16 @@ import { Fragment, useCallback, useEffect, useRef, useState, type CSSProperties 
 import {
   apiDeregister,
   apiHealth,
+  apiOAIDatasets,
+  apiOAISeries,
   apiRegister,
   apiUEs,
   SCENARIOS,
   type Health,
   type NodeId,
+  type OAIDataset,
+  type OAIRecord,
+  type OAIRegisterInput,
   type RegisterResult,
   type Scenario,
   type UEEntry,
@@ -28,8 +33,11 @@ import { RetryTimeline } from './components/RetryTimeline';
 import { SignalScatter, type ScatterSample } from './components/SignalScatter';
 import { UEResourceDetail } from './components/UEResourceDetail';
 import { NodeTerminal } from './components/NodeTerminal';
+import { OAIDataPanel } from './components/OAIDataPanel';
 
 type Mode = 'probing' | 'live' | 'demo';
+type Surface = 'litecore' | 'oai';
+type ChannelSource = 'simulated' | 'oai';
 
 const NODES = [
   { id: 'UE', name: '模拟终端', task: '发起注册', port: '浏览器' },
@@ -132,11 +140,21 @@ function sinrMeter(value: number): number {
 type HistoryRecord = { key: number; r: RegisterResult };
 
 export default function App() {
+  const [surface, setSurface] = useState<Surface>('litecore');
   const [mode, setMode] = useState<Mode>('probing');
   const [health, setHealth] = useState<Health | null>(null);
   const [ues, setUes] = useState<UEEntry[]>([]);
   const [demoUes, setDemoUes] = useState<UEEntry[]>(() => demoUEs());
   const [scenario, setScenario] = useState<Scenario>('stable');
+  const [channelSource, setChannelSource] = useState<ChannelSource>('simulated');
+  const [oaiDatasets, setOAIDatasets] = useState<OAIDataset[]>([]);
+  const [oaiDatasetId, setOAIDatasetId] = useState('');
+  const [oaiRNTI, setOAIRNTI] = useState('');
+  const [oaiPoints, setOAIPoints] = useState<OAIRecord[]>([]);
+  const [oaiPointIndex, setOAIPointIndex] = useState(0);
+  const [oaiSignalPower, setOAISignalPower] = useState('-80');
+  const [oaiLoading, setOAILoading] = useState(false);
+  const [oaiInputError, setOAIInputError] = useState('');
   const [ueId, setUeId] = useState('UE-LIVE-01');
   const [running, setRunning] = useState(false);
   const [phase, setPhase] = useState(-1);
@@ -168,6 +186,11 @@ export default function App() {
   const lastPacketAt = useRef(0);
   const demoUesRef = useRef<UEEntry[]>(demoUEs());
   const registrationAbort = useRef<AbortController | null>(null);
+  const oaiRunSeq = useRef(0);
+  const selectedOAIDataset = oaiDatasets.find((item) => item.id === oaiDatasetId);
+  const selectedOAIRecord = oaiPoints[Math.min(oaiPointIndex, Math.max(0, oaiPoints.length - 1))];
+  const parsedOAISignalPower = Number(oaiSignalPower);
+  const oaiExperimentReady = !!selectedOAIRecord && Number.isFinite(parsedOAISignalPower) && parsedOAISignalPower >= -200 && parsedOAISignalPower <= 0;
 
   const appendUELog = useCallback((message: string) => {
     const line = `${new Date().toISOString()} ${message}`;
@@ -194,6 +217,44 @@ export default function App() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (channelSource !== 'oai' || oaiDatasets.length > 0) return;
+    let cancelled = false;
+    setOAILoading(true);
+    setOAIInputError('');
+    void apiOAIDatasets()
+      .then(({ datasets }) => {
+        if (cancelled) return;
+        const available = datasets.filter((item) => !item.loadError);
+        setOAIDatasets(available);
+        const first = available[0];
+        if (first) {
+          setOAIDatasetId(first.id);
+          setOAIRNTI(first.ues[0] ?? '');
+        } else {
+          setOAIInputError('没有可用于核心网实验的 OAI 数据集。');
+        }
+      })
+      .catch((cause) => !cancelled && setOAIInputError(cause instanceof Error ? cause.message : '读取 OAI 数据集失败'))
+      .finally(() => !cancelled && setOAILoading(false));
+    return () => { cancelled = true; };
+  }, [channelSource, oaiDatasets.length]);
+
+  useEffect(() => {
+    if (channelSource !== 'oai' || !oaiDatasetId || !oaiRNTI) return;
+    let cancelled = false;
+    setOAILoading(true);
+    setOAIInputError('');
+    setOAIPointIndex(0);
+    void apiOAISeries(oaiDatasetId, oaiRNTI)
+      .then(({ points }) => {
+        if (!cancelled) setOAIPoints(points);
+      })
+      .catch((cause) => !cancelled && setOAIInputError(cause instanceof Error ? cause.message : '读取 OAI 记录失败'))
+      .finally(() => !cancelled && setOAILoading(false));
+    return () => { cancelled = true; };
+  }, [channelSource, oaiDatasetId, oaiRNTI]);
 
   // 健康采样：每格 3 秒（去抖 1 秒防重复写入）。
   const recordHealth = useCallback((h: Health) => {
@@ -316,7 +377,7 @@ export default function App() {
   }, []);
 
   const run = useCallback(
-    async (id: string, chosen: Scenario) => {
+    async (id: string, chosen: Scenario, oaiInput?: OAIRegisterInput) => {
       if (busy.current || mode === 'probing') return;
       busy.current = true;
       setError('');
@@ -326,13 +387,15 @@ export default function App() {
       setPhase(0);
       const abortController = new AbortController();
       registrationAbort.current = abortController;
-      appendUELog(`请求 POST /api/register ue_id=${id} scenario=${chosen}`);
+      appendUELog(oaiInput
+        ? `请求 POST /api/register ue_id=${id} source=oai dataset=${oaiInput.datasetId} record_index=${oaiInput.recordIndex} signal_power=${oaiInput.signalPower}`
+        : `请求 POST /api/register ue_id=${id} scenario=${chosen}`);
       await delay(240);
       try {
         let res: RegisterResult;
         if (mode === 'live') {
           setPhase(1);
-          res = await apiRegister(id, chosen, abortController.signal); // 真实请求；期间动画停在 AMF 一步
+          res = await apiRegister(id, chosen, abortController.signal, oaiInput); // 真实请求；期间动画停在 AMF 一步
           if (!alive.current) return;
           if (res.success) {
             setPhase(2);
@@ -428,6 +491,14 @@ export default function App() {
   // 所有计数用闭包局部变量累积，结束前一次性写回 state，避免 updater 副作用。
   const startLoadTest = useCallback(async () => {
     if (busy.current || mode !== 'live') return;
+    const loadOAIInput = channelSource === 'oai' && selectedOAIRecord && oaiExperimentReady
+      ? { datasetId: oaiDatasetId, recordIndex: selectedOAIRecord.index, signalPower: parsedOAISignalPower }
+      : undefined;
+    if (channelSource === 'oai' && !loadOAIInput) {
+      setError('请先选择有效的 OAI 记录和实验信号功率。');
+      return;
+    }
+    const loadSource = loadOAIInput ? `OAI 0x${selectedOAIRecord?.rnti} · 源行 ${selectedOAIRecord?.sourceLine}` : loadScenario;
     const concurrency = Math.min(50, Math.max(1, Number.parseInt(loadInputs.concurrency, 10) || 1));
     const total = Math.min(200, Math.max(1, Number.parseInt(loadInputs.total, 10) || 1));
     const seq = ++loadSeq.current;
@@ -445,7 +516,7 @@ export default function App() {
     const commit = () => {
       setLoadState({
         runId,
-        scenario: loadScenario,
+        scenario: loadSource,
         concurrency,
         running: true,
         total,
@@ -461,7 +532,7 @@ export default function App() {
     };
     setLoadState({
       runId,
-      scenario: loadScenario,
+      scenario: loadSource,
       concurrency,
       running: true,
       total,
@@ -481,7 +552,7 @@ export default function App() {
         const id = `UE-LOAD-${seq}-${String(index + 1).padStart(3, '0')}`;
         const requestStartedAt = performance.now();
         try {
-          const res = await apiRegister(id, loadScenario);
+          const res = await apiRegister(id, loadScenario, undefined, loadOAIInput);
           if (!alive.current) return;
           const clientMs = performance.now() - requestStartedAt;
           const ms = Math.max(res.processingMs, 1);
@@ -557,7 +628,7 @@ export default function App() {
     setLoadRuns((prev) => [...prev, summary].slice(-3));
     setLoadState({
       runId,
-      scenario: loadScenario,
+      scenario: loadSource,
       concurrency,
       running: false,
       total,
@@ -581,7 +652,7 @@ export default function App() {
       /* 列表会由轮询兜底 */
     }
     busy.current = false;
-  }, [loadInputs, loadScenario, mode]);
+  }, [loadInputs, loadScenario, mode, channelSource, selectedOAIRecord, oaiExperimentReady, oaiDatasetId, parsedOAISignalPower]);
 
   const shownUEs = mode === 'demo' ? demoUes : ues;
   const loadBusy = !!loadState?.running;
@@ -599,18 +670,33 @@ export default function App() {
               <span>5G 核心网实验台</span>
             </span>
           </div>
-          <span className={`mode-badge ${mode}`}>
-            <span className="mode-indicator" aria-hidden="true" />
-            {mode === 'live' ? '实时连接' : mode === 'demo' ? '演示模式' : '正在连接'}
-          </span>
+          <div className="masthead-actions">
+            <nav className="surface-nav" aria-label="实验数据来源">
+              <button type="button" className={surface === 'litecore' ? 'active' : ''} aria-current={surface === 'litecore' ? 'page' : undefined} onClick={() => setSurface('litecore')}>核心网实验</button>
+              <button type="button" className={surface === 'oai' ? 'active' : ''} aria-current={surface === 'oai' ? 'page' : undefined} onClick={() => setSurface('oai')}>OAI 数据</button>
+            </nav>
+            <span className={`mode-badge ${surface === 'oai' ? 'archive' : mode}`}>
+              <span className="mode-indicator" aria-hidden="true" />
+              {surface === 'oai' ? '公开数据' : mode === 'live' ? '实时连接' : mode === 'demo' ? '演示模式' : '正在连接'}
+            </span>
+          </div>
         </div>
         <div className="masthead-status">
-          <p className={`health-line${anyWarn ? ' warn' : ''}`}>{healthLine(mode, health)}</p>
-          <HealthDots mode={mode} health={health} />
+          {surface === 'oai' ? (
+            <>
+              <p className="health-line">公开实验记录由网关本地读取，AMF、SMF、UPF 离线时仍可浏览。</p>
+              <span className="oai-header-provenance"><i aria-hidden="true" />来源、版本与原始行号均保留</span>
+            </>
+          ) : (
+            <>
+              <p className={`health-line${anyWarn ? ' warn' : ''}`}>{healthLine(mode, health)}</p>
+              <HealthDots mode={mode} health={health} />
+            </>
+          )}
         </div>
       </header>
 
-      {mode === 'demo' && (
+      {surface === 'litecore' && mode === 'demo' && (
         <div className="demo-banner" role="status">
           <span className="banner-mark" aria-hidden="true">i</span>
           <span>
@@ -620,7 +706,7 @@ export default function App() {
         </div>
       )}
 
-      <main className="workspace" id="main-content">
+      {surface === 'litecore' ? <main className="workspace" id="main-content">
         <div className="page-heading">
           <div>
             <h1>5G 核心网注册实验</h1>
@@ -638,59 +724,102 @@ export default function App() {
                 <h2 id="register-title">实验参数</h2>
                 <p>配置本次 UE 注册请求</p>
               </div>
-              <span className="section-tag">{mode === 'live' ? '真实请求' : '排练数据'}</span>
+              <span className="section-tag">{channelSource === 'oai' ? 'OAI 数据驱动' : mode === 'live' ? '真实请求' : '排练数据'}</span>
             </div>
             <form
               aria-busy={running}
               onSubmit={(event) => {
                 event.preventDefault();
+                if (channelSource === 'oai') {
+                  if (!selectedOAIRecord || !oaiExperimentReady) {
+                    setOAIInputError('请选择有效的 OAI 记录，并填写 -200 至 0 dBm 的实验信号功率。');
+                    return;
+                  }
+                  const id = `OAI-${selectedOAIRecord.rnti}-L${selectedOAIRecord.sourceLine}-${++oaiRunSeq.current}`.slice(0, 48);
+                  setOAIInputError('');
+                  void run(id, 'stable', { datasetId: oaiDatasetId, recordIndex: selectedOAIRecord.index, signalPower: parsedOAISignalPower });
+                  return;
+                }
                 void run(ueId.trim(), scenario);
               }}
             >
-              <label htmlFor="ue-id">终端标识</label>
-              <input
-                id="ue-id"
-                className="field"
-                value={ueId}
-                maxLength={48}
-                disabled={running || loadBusy || mode === 'probing'}
-                onChange={(event) => {
-                  setUeId(event.target.value);
-                  setError('');
-                }}
-                aria-invalid={!!error}
-                aria-describedby={error ? 'form-error' : undefined}
-                autoComplete="off"
-              />
-              <label htmlFor="scenario">注册信道模型</label>
+              <label htmlFor="channel-source">实验输入</label>
               <select
-                id="scenario"
+                id="channel-source"
                 className="field"
-                value={scenario}
-                aria-describedby="scenario-help"
+                value={channelSource}
                 disabled={running || loadBusy || mode === 'probing'}
-                onChange={(event) => {
-                  const value = event.target.value as Scenario;
-                  if (Object.hasOwn(SCENARIOS, value)) setScenario(value);
-                }}
+                onChange={(event) => setChannelSource(event.target.value as ChannelSource)}
               >
-                {Object.entries(SCENARIOS).map(([key, value]) => (
-                  <option key={key} value={key}>
-                    {value.label}
-                  </option>
-                ))}
+                <option value="simulated">模拟信道</option>
+                <option value="oai">公开 OAI 记录</option>
               </select>
-              <p className="field-help" id="scenario-help">
-                {SCENARIOS[scenario].description}
-              </p>
+              {channelSource === 'simulated' ? (
+                <>
+                  <label htmlFor="ue-id">终端标识</label>
+                  <input
+                    id="ue-id"
+                    className="field"
+                    value={ueId}
+                    maxLength={48}
+                    disabled={running || loadBusy || mode === 'probing'}
+                    onChange={(event) => {
+                      setUeId(event.target.value);
+                      setError('');
+                    }}
+                    aria-invalid={!!error}
+                    aria-describedby={error ? 'form-error' : undefined}
+                    autoComplete="off"
+                  />
+                  <label htmlFor="scenario">注册信道模型</label>
+                  <select
+                    id="scenario"
+                    className="field"
+                    value={scenario}
+                    aria-describedby="scenario-help"
+                    disabled={running || loadBusy || mode === 'probing'}
+                    onChange={(event) => {
+                      const value = event.target.value as Scenario;
+                      if (Object.hasOwn(SCENARIOS, value)) setScenario(value);
+                    }}
+                  >
+                    {Object.entries(SCENARIOS).map(([key, value]) => <option key={key} value={key}>{value.label}</option>)}
+                  </select>
+                  <p className="field-help" id="scenario-help">{SCENARIOS[scenario].description}</p>
+                </>
+              ) : (
+                <div className="oai-register-fields">
+                  <label htmlFor="core-oai-dataset">OAI 数据集</label>
+                  <select id="core-oai-dataset" className="field" value={oaiDatasetId} disabled={running || loadBusy || oaiLoading} onChange={(event) => {
+                    const next = oaiDatasets.find((item) => item.id === event.target.value);
+                    setOAIDatasetId(event.target.value);
+                    setOAIRNTI(next?.ues[0] ?? '');
+                  }}>
+                    {oaiDatasets.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                  </select>
+                  <label htmlFor="core-oai-rnti">终端 RNTI</label>
+                  <select id="core-oai-rnti" className="field" value={oaiRNTI} disabled={running || loadBusy || oaiLoading} onChange={(event) => setOAIRNTI(event.target.value)}>
+                    {(selectedOAIDataset?.ues ?? []).map((item) => <option key={item} value={item}>0x{item}</option>)}
+                  </select>
+                  <label htmlFor="core-oai-record">实验记录</label>
+                  <input id="core-oai-record" className="oai-record-range" type="range" min="0" max={Math.max(0, oaiPoints.length - 1)} value={oaiPointIndex} disabled={running || loadBusy || oaiLoading || oaiPoints.length === 0} onChange={(event) => setOAIPointIndex(Number(event.target.value))} />
+                  <div className="oai-register-record mono" aria-live="polite">
+                    {selectedOAIRecord ? `源行 ${selectedOAIRecord.sourceLine} · 帧 ${selectedOAIRecord.frame}.${selectedOAIRecord.slot} · SINR ${selectedOAIRecord.sinrDb.toFixed(1)} dB` : oaiLoading ? '正在读取记录…' : '暂无记录'}
+                  </div>
+                  <label htmlFor="core-oai-signal">实验设定信号功率（dBm）</label>
+                  <input id="core-oai-signal" className="field mono" type="number" min="-200" max="0" step="0.5" value={oaiSignalPower} disabled={running || loadBusy} onChange={(event) => setOAISignalPower(event.target.value)} aria-describedby="core-oai-help" />
+                  <p className="field-help" id="core-oai-help">SINR 使用公开 OAI 原值；数据没有提供信号功率，因此该值属于可调整的教学实验设定。</p>
+                  {oaiInputError && <p className="form-error" role="alert">{oaiInputError}</p>}
+                </div>
+              )}
               {error && (
                 <p id="form-error" className="form-error" role="alert">
                   {error}
                 </p>
               )}
-              <button className="run-button" type="submit" disabled={running || loadBusy || mode === 'probing'}>
+              <button className="run-button" type="submit" disabled={running || loadBusy || mode === 'probing' || (channelSource === 'oai' && (mode !== 'live' || oaiLoading || !oaiExperimentReady))}>
                 <span className="button-status" aria-hidden="true" />
-                {running ? '注册进行中' : '发起注册'}
+                {running ? '注册进行中' : channelSource === 'oai' ? '用当前 OAI 记录注册' : '发起注册'}
               </button>
             </form>
           </section>
@@ -786,9 +915,16 @@ export default function App() {
                   <div className="result-copy">
                     <strong>{resultHeadline(result)}</strong>
                     <p className="result-message">{result.message}</p>
+                    {result.inputSource === 'oai' && <p className="result-provenance mono">OAI 0x{result.rnti} · 原文件第 {result.sourceLine} 行 · SINR {result.sinr.toFixed(1)} dB</p>}
                   </div>
                   {result.success && (
                     <dl className="result-detail">
+                      {result.inputSource === 'oai' && (
+                        <>
+                          <div><dt>OAI RNTI</dt><dd className="mono">0x{result.rnti}</dd></div>
+                          <div><dt>原文件行</dt><dd className="mono">{result.sourceLine}</dd></div>
+                        </>
+                      )}
                       <div>
                         <dt>AMF UE ID</dt>
                         <dd className="mono">{result.amfUeId}</dd>
@@ -818,7 +954,7 @@ export default function App() {
               )}
             </div>
 
-            <p className="flow-footnote">接入门控仅在首次注册时生效；UPF 包数为教学用模拟计数。</p>
+            <p className="flow-footnote">{channelSource === 'oai' ? '本次请求使用公开记录中的 SINR 和页面设定的信号功率；AMF、SMF、UPF 调用及网元停启为当前 LiteCore 的真实实验链路。' : '接入门控仅在首次注册时生效；UPF 包数为教学用模拟计数。'}</p>
           </section>
         </section>
 
@@ -1040,15 +1176,16 @@ export default function App() {
             onInput={(field, value) => setLoadInputs((prev) => ({ ...prev, [field]: value }))}
             onScenario={setLoadScenario}
             onStart={() => void startLoadTest()}
-            disabled={mode !== 'live' || running || loadBusy}
+            disabled={mode !== 'live' || running || loadBusy || (channelSource === 'oai' && !oaiExperimentReady)}
             demo={mode === 'demo'}
+            sourceLabel={channelSource === 'oai' && selectedOAIRecord ? `OAI 0x${selectedOAIRecord.rnti} · 源行 ${selectedOAIRecord.sourceLine}` : undefined}
           />
         </section>
-      </main>
+      </main> : <main className="workspace" id="main-content"><OAIDataPanel /></main>}
 
       <footer>
         <span>LiteCore · 轻量级 5G 核心网教学实验</span>
-        <span>{mode === 'live' ? '数据来自 LiteCore 后端' : '当前显示排练数据'} · UPF 转发为模拟计数</span>
+        <span>{surface === 'oai' ? '公开 OAI 离线数据 · 来源可追溯' : `${mode === 'live' ? '数据来自 LiteCore 后端' : '当前显示排练数据'} · UPF 转发为模拟计数`}</span>
       </footer>
       <NodeTerminal
         activeNode={activeNode}

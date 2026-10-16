@@ -23,6 +23,7 @@ const (
 
 type options struct {
 	address, action, ueID, amfUEID, scenario, output, runID string
+	input, source                                           string
 	count, concurrency                                      int
 	timeout                                                 time.Duration
 	seed                                                    int64
@@ -36,16 +37,19 @@ type result struct {
 	Signal, SINR                   float32
 	RetryCount                     int
 	Message                        string
+	Trace                          *traceResultMetadata
 }
 
 func parseFlags() options {
 	var o options
 	flag.StringVar(&o.address, "address", "localhost:50051", "AMF gRPC地址")
-	flag.StringVar(&o.action, "action", "register", "register、get、deregister或benchmark")
+	flag.StringVar(&o.action, "action", "register", "register、get、deregister、benchmark或import-channel")
 	flag.StringVar(&o.ueID, "id", "UE-001", "单UE ID")
 	flag.StringVar(&o.amfUEID, "amf-ue-id", "", "注销时的AMF UE ID；留空会先查询")
 	flag.StringVar(&o.scenario, "scenario", "stable", "stable、edge、degrading或mixed")
 	flag.StringVar(&o.output, "output", "", "压测明细CSV路径（可选）")
+	flag.StringVar(&o.input, "input", "", "信道CSV路径；用于import-channel或benchmark")
+	flag.StringVar(&o.source, "source", "", "文件来源说明，例如OAI nrUE版本、采集方式与日期；使用-input时必填")
 	flag.StringVar(&o.runID, "run-id", "", "压测运行ID（可选；留空自动生成唯一值）")
 	flag.IntVar(&o.count, "count", 100, "压测UE数量")
 	flag.IntVar(&o.concurrency, "concurrency", 20, "压测并发数")
@@ -57,6 +61,18 @@ func parseFlags() options {
 
 func main() {
 	o := parseFlags()
+	if o.action == "import-channel" {
+		if err := importChannel(o); err != nil {
+			log.Fatalf("导入信道数据失败: %v", err)
+		}
+		return
+	}
+	if o.input != "" && o.action != "benchmark" {
+		log.Fatal("-input仅支持import-channel或benchmark，未发送请求")
+	}
+	if o.source != "" && o.input == "" {
+		log.Fatal("-source必须与-input一起使用")
+	}
 	conn, err := grpc.NewClient(o.address, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("连接 AMF: %v", err)

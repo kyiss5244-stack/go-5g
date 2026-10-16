@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	amfpb "github.com/5g-core/proto/amf"
 	"google.golang.org/grpc"
@@ -13,6 +15,16 @@ import (
 type timingAMFClient struct {
 	amfpb.AMFServiceClient
 	processingMs float64
+}
+
+type capturingAMFClient struct {
+	amfpb.AMFServiceClient
+	request *amfpb.RegisterRequest
+}
+
+func (c *capturingAMFClient) Register(_ context.Context, request *amfpb.RegisterRequest, _ ...grpc.CallOption) (*amfpb.RegisterResponse, error) {
+	c.request = request
+	return &amfpb.RegisterResponse{Success: true, ProcessingMs: 1}, nil
 }
 
 type blockingAMFClient struct{ amfpb.AMFServiceClient }
@@ -52,5 +64,34 @@ func TestRegistrationJSONPreservesProcessingPrecision(t *testing.T) {
 		if !body.Success || body.ProcessingMs != want {
 			t.Errorf("processingMs = %v, want %v; success = %v", body.ProcessingMs, want, body.Success)
 		}
+	}
+}
+
+func TestHandleRegisterUsesVerifiedOAIRecord(t *testing.T) {
+	client := &capturingAMFClient{}
+	dataset := questDatasetMetadata()
+	dataset.Records = []oaiRecord{{Index: 0, SourceLine: 17, RNTI: "46dd", SINRDB: 12.5}}
+	g := &gateway{amfClient: client, oaiDataset: dataset, known: make(map[string]time.Time)}
+	request := httptest.NewRequest("POST", "/api/register", strings.NewReader(`{"ueId":"OAI-UE-1","oai":{"datasetId":"quest-users2-run1","recordIndex":0,"signalPower":-82.5}}`))
+	recorder := httptest.NewRecorder()
+	g.handleRegister(recorder, request)
+	if recorder.Code != 200 {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if client.request == nil || client.request.SignalPower != -82.5 || client.request.Sinr != 12.5 {
+		t.Fatalf("unexpected AMF request: %+v", client.request)
+	}
+	if !strings.Contains(recorder.Body.String(), `"inputSource":"oai"`) || !strings.Contains(recorder.Body.String(), `"sourceLine":17`) {
+		t.Fatalf("missing OAI provenance: %s", recorder.Body.String())
+	}
+}
+
+func TestHandleRegisterRejectsUnknownOAIRecord(t *testing.T) {
+	g := &gateway{oaiDataset: questDatasetMetadata()}
+	request := httptest.NewRequest("POST", "/api/register", strings.NewReader(`{"ueId":"OAI-UE-1","oai":{"datasetId":"quest-users2-run1","recordIndex":99,"signalPower":-80}}`))
+	recorder := httptest.NewRecorder()
+	g.handleRegister(recorder, request)
+	if recorder.Code != 400 || !strings.Contains(recorder.Body.String(), "OAI 记录序号无效") {
+		t.Fatalf("unexpected response: status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }

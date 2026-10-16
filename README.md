@@ -72,6 +72,10 @@ cd frontend-live && npm install && npm run dev
 
 浏览器打开 http://localhost:5173。API 说明见 [frontend-live/README.md](frontend-live/README.md)。
 
+网页顶部的“OAI 数据”入口可读取仓库内附带的一组公开 QUEST/OAI 上行调度记录，按 RNTI 查看 SINR、MCS、PRB、时延和原始行号，在 UE→gNB→AMF→SMF→UPF 路径中进行离线回放，并导出带来源追踪字段的 CSV。核心网路径是历史数据驱动的流程演示，该数据不经过 LiteCore 注册链路；来源边界和实施说明见 [公开 OAI 实验数据接入方案](docs/OAI_PUBLIC_DATA_PLAN.md)。
+
+“核心网实验”的“实验输入”可以切换为“公开 OAI 记录”。此模式从网关已核验的数据集中选择 RNTI 和原始记录，将该记录的 SINR 与页面明确标注的实验信号功率送入正式注册链路；注册路径、在线 UE、注销、压测、日志和 AMF/SMF/UPF 启停仍使用原有功能。网元启停依赖 `controller` 与 Docker Compose 环境，控制器不可用时终端会明确显示错误。
+
 ## 本地开发
 
 分别打开三个终端：
@@ -92,6 +96,8 @@ go run ./ue -action deregister -id UE-001
 ```
 
 ## 并发实验
+
+支持从 CSV 导入信道测量记录，保留测量指标、来源和采集时间。先用 `go run ./ue -action import-channel -input <文件.csv> -source <采集说明>` 校验；包含兼容的信号功率与 SINR 列时，可通过 `benchmark -input` 驱动注册实验。格式与使用边界见 [OAI 信道数据导入](docs/CHANNEL_IMPORT.md)。OAI 原始日志需按实际版本另行转换，当前没有内置实测数据集。
 
 ```bash
 mkdir -p results

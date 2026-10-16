@@ -23,11 +23,31 @@ const maxRunIDLength = 64
 var runSequence atomic.Uint64
 
 func runBenchmark(client amfpb.AMFServiceClient, o options) error {
-	if o.count < 1 || o.concurrency < 1 {
+	if (o.input == "" && o.count < 1) || o.concurrency < 1 {
 		return fmt.Errorf("count和concurrency必须大于0")
 	}
 	if o.timeout <= 0 {
 		return fmt.Errorf("timeout必须大于0")
+	}
+	var trace *radioTrace
+	var samples []ChannelSample
+	if o.input != "" {
+		var err error
+		trace, err = loadRadioTrace(o.input, o.source)
+		if err != nil {
+			return err
+		}
+		samples, err = trace.admissionSamples()
+		if err != nil {
+			return err
+		}
+		if err := protectTraceInput(o.input, o.output); err != nil {
+			return err
+		}
+		o.count = len(samples)
+		o.scenario = "file"
+		log.Printf("文件信道 source=%q sha256=%s rows=%d；使用全部数据行，忽略count/scenario/seed；每行独立注册，不按采集时间等待", trace.Source, trace.SHA256, o.count)
+		log.Print("接入门限仍为教学参数（signal_power >= -110 dBm、SINR >= 0 dB），结果不代表OAI真实注册或空口性能")
 	}
 
 	runID, err := resolveRunID(o.runID)
@@ -48,12 +68,25 @@ func runBenchmark(client amfpb.AMFServiceClient, o options) error {
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			channelSeed := o.seed + int64(index)
-			channel := model.Sample(rand.New(rand.NewSource(channelSeed)))
+			var channelSeed int64
+			var channel ChannelSample
+			if trace != nil {
+				channel = samples[index]
+			} else {
+				channelSeed = o.seed + int64(index)
+				channel = model.Sample(rand.New(rand.NewSource(channelSeed)))
+			}
 			r := register(client, o, benchmarkUEID(runID, index), channel)
 			r.RunID = runID
 			r.Scenario = o.scenario
 			r.ChannelSeed = channelSeed
+			if trace != nil {
+				sample := trace.Samples[index]
+				r.Trace = &traceResultMetadata{
+					Source: trace.Source, SHA256: trace.SHA256, TimeMS: sample.TimeMS,
+					Line: sample.Line, UEID: sample.UEID, CellID: sample.CellID,
+				}
+			}
 			results[index] = r
 		}(i)
 	}
@@ -201,25 +234,33 @@ func writeCSV(path string, results []result) error {
 	if err := w.Write([]string{
 		"run_id", "scenario", "channel_seed", "ue_id", "success", "retry_count", "latency_ms",
 		"signal_power_dbm", "sinr_db", "amf_ue_id", "session_id", "ue_ip", "message",
+		"data_source", "source_sha256", "source_line", "trace_time_ms", "source_ue_id", "source_cell_id",
 	}); err != nil {
 		return err
 	}
 	for _, r := range results {
-		if err := w.Write([]string{
+		seed := strconv.FormatInt(r.ChannelSeed, 10)
+		metadata := make([]string, 6)
+		if r.Trace != nil {
+			seed = ""
+			metadata = []string{r.Trace.Source, r.Trace.SHA256, strconv.Itoa(r.Trace.Line),
+				strconv.FormatFloat(r.Trace.TimeMS, 'g', -1, 64), r.Trace.UEID, r.Trace.CellID}
+		}
+		if err := w.Write(append([]string{
 			r.RunID,
 			r.Scenario,
-			strconv.FormatInt(r.ChannelSeed, 10),
+			seed,
 			r.UEID,
 			strconv.FormatBool(r.Success),
 			strconv.Itoa(r.RetryCount),
 			fmt.Sprintf("%.3f", float64(r.Latency.Microseconds())/1000),
-			fmt.Sprintf("%.2f", r.Signal),
-			fmt.Sprintf("%.2f", r.SINR),
+			strconv.FormatFloat(float64(r.Signal), 'g', -1, 32),
+			strconv.FormatFloat(float64(r.SINR), 'g', -1, 32),
 			r.AMFUEID,
 			r.SessionID,
 			r.UEIP,
 			r.Message,
-		}); err != nil {
+		}, metadata...)); err != nil {
 			return err
 		}
 	}

@@ -10,5 +10,6 @@ FROM alpine:3.22
 RUN adduser -D -u 10001 litecore
 USER litecore
 COPY --from=builder /out/gateway /usr/local/bin/gateway
+COPY datasets/oai/quest/gNB_results.csv /usr/share/litecore/oai/gNB_results.csv
 EXPOSE 8080
 ENTRYPOINT ["gateway"]

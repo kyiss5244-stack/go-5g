@@ -21,6 +21,11 @@ export type RegisterResult = {
   processingMs: number;
   gatewayMs: number;
   message: string;
+  inputSource?: 'oai';
+  datasetId?: string;
+  recordIndex?: number;
+  sourceLine?: number;
+  rnti?: string;
 };
 
 export type UEEntry = {
@@ -78,10 +83,16 @@ export function apiHealth(): Promise<Health> {
 }
 
 // 注册在网关内部可能带重试（最多 2 次，每次最长 4 秒），给足超时。
-export function apiRegister(ueId: string, scenario: Scenario, signal?: AbortSignal): Promise<RegisterResult> {
+export type OAIRegisterInput = {
+  datasetId: string;
+  recordIndex: number;
+  signalPower: number;
+};
+
+export function apiRegister(ueId: string, scenario: Scenario, signal?: AbortSignal, oai?: OAIRegisterInput): Promise<RegisterResult> {
   return request<RegisterResult>(
     '/api/register',
-    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ueId, scenario }), signal },
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ueId, scenario, oai }), signal },
     20000,
   );
 }
@@ -119,4 +130,57 @@ export function apiDeregister(ueId: string): Promise<DeregisterResult> {
 
 export function apiUEs(): Promise<{ ues: UEEntry[] }> {
   return request<{ ues: UEEntry[] }>('/api/ues', undefined, 10000);
+}
+
+export type OAIDataset = {
+  id: string;
+  name: string;
+  source: string;
+  sourceUrl: string;
+  sourceSha256: string;
+  commit: string;
+  environment: string;
+  license: string;
+  timeAxis: string;
+  recordCount: number;
+  ues: string[];
+  minSinrDb: number;
+  maxSinrDb: number;
+  loadError?: string;
+};
+
+export type OAIRecord = {
+  index: number;
+  sourceLine: number;
+  frame: number;
+  slot: number;
+  rnti: string;
+  sinrDb: number;
+  transportBlockBytes: number;
+  mcs: number;
+  prbs: number;
+  pendingUlBytes: number;
+  holDelayMs: number;
+  ulDelayMs: number;
+};
+
+export type OAIStats = {
+  count: number;
+  avgSinrDb: number;
+  avgMcs: number;
+  avgPrbs: number;
+};
+
+export function apiOAIDatasets(): Promise<{ datasets: OAIDataset[] }> {
+  return request<{ datasets: OAIDataset[] }>('/api/oai/datasets', undefined, 5000);
+}
+
+export function apiOAIRecords(datasetId: string, rnti: string, limit = 100): Promise<{ records: OAIRecord[]; total: number }> {
+  const query = new URLSearchParams({ rnti, limit: String(limit) });
+  return request<{ records: OAIRecord[]; total: number }>(`/api/oai/datasets/${encodeURIComponent(datasetId)}/records?${query}`, undefined, 5000);
+}
+
+export function apiOAISeries(datasetId: string, rnti: string): Promise<{ points: OAIRecord[]; sourceCount: number; downsampled: boolean; stats: OAIStats }> {
+  const query = new URLSearchParams({ rnti, maxPoints: '600' });
+  return request<{ points: OAIRecord[]; sourceCount: number; downsampled: boolean; stats: OAIStats }>(`/api/oai/datasets/${encodeURIComponent(datasetId)}/series?${query}`, undefined, 5000);
 }

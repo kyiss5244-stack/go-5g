@@ -508,9 +508,51 @@ select:disabled {
   color: var(--muted);
 }
 
+.oai-register-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: 2px;
+  padding: 14px;
+  border: 1px solid #cedaf0;
+  border-radius: 12px;
+  background: var(--surface-blue);
+}
+
+.oai-register-fields label:first-child {
+  margin-top: 0;
+}
+
+.oai-record-range {
+  width: 100%;
+  min-height: 28px;
+  accent-color: var(--primary);
+}
+
+.oai-record-range:focus-visible {
+  outline: 3px solid rgba(31, 94, 255, 0.16);
+  outline-offset: 2px;
+}
+
+.oai-register-record {
+  padding: 9px 10px;
+  border: 1px solid rgba(31, 94, 255, 0.16);
+  border-radius: 8px;
+  background: var(--surface);
+  color: #294f91;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
 .form-error {
   color: var(--danger);
   font-weight: 600;
+}
+
+.result-provenance {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 11.5px;
 }
 
 .run-button {
@@ -2367,8 +2409,560 @@ button.node-symbol:hover {
   }
 }
 
+/* Public OAI data workspace — extends the existing Daylight lab language. */
+
+.masthead-actions,
+.surface-nav,
+.oai-header-provenance,
+.oai-mode-note,
+.oai-playback {
+  display: flex;
+  align-items: center;
+}
+
+.masthead-actions {
+  gap: 12px;
+}
+
+.surface-nav {
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-subtle);
+}
+
+.surface-nav button {
+  min-height: 38px;
+  padding: 7px 12px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  transition: background-color 130ms ease, color 130ms ease, box-shadow 130ms ease;
+}
+
+.surface-nav button.active {
+  background: var(--surface);
+  color: var(--primary);
+  box-shadow: 0 1px 2px rgba(21, 32, 51, 0.08);
+}
+
+.mode-badge.archive {
+  color: var(--primary);
+  background: var(--primary-soft);
+  border-color: #cbdafe;
+}
+
+.mode-badge.archive .mode-indicator {
+  background: var(--primary);
+}
+
+.oai-header-provenance,
+.oai-mode-note {
+  gap: 7px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.oai-header-provenance i,
+.oai-mode-note i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--primary);
+  box-shadow: 0 0 0 4px var(--primary-soft);
+}
+
+.oai-workspace {
+  display: grid;
+  gap: 18px;
+}
+
+.oai-page-heading {
+  margin-bottom: 0;
+}
+
+.oai-source-strip {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(360px, 1fr) auto;
+  gap: 22px;
+  align-items: center;
+  padding: 18px 20px;
+  border: 1px solid #cad7ee;
+  border-radius: 12px;
+  background: var(--surface-blue);
+}
+
+.oai-source-strip strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 17px;
+}
+
+.oai-source-strip p {
+  max-width: 680px;
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.oai-source-strip dl {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+}
+
+.oai-source-strip dl div {
+  display: grid;
+  grid-template-columns: 58px 1fr;
+  gap: 9px;
+}
+
+.oai-source-strip dt {
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.oai-source-strip dd {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.oai-source-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.oai-control-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(170px, 0.7fr) minmax(230px, 1.1fr) auto;
+  gap: 12px;
+  align-items: end;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.oai-control-row label,
+.oai-speed-label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.oai-control-row select,
+.oai-speed-label select {
+  min-height: 42px;
+  padding: 8px 34px 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.oai-filter-context {
+  display: flex;
+  min-height: 42px;
+  flex-direction: column;
+  justify-content: center;
+  padding-left: 14px;
+  border-left: 1px solid var(--border);
+}
+
+.oai-filter-context span {
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+
+.oai-filter-context small {
+  color: var(--faint);
+}
+
+.oai-export-button {
+  min-height: 42px;
+}
+
+.oai-flow-surface {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.oai-network-path {
+  padding-top: 8px;
+}
+
+.oai-measurement-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.oai-measurement-grid .measurement:last-child {
+  border-right: 0;
+}
+
+.oai-metrics {
+  display: grid;
+  grid-template-columns: 1.35fr repeat(3, 1fr);
+  gap: 12px;
+}
+
+.oai-metrics article {
+  min-height: 122px;
+  padding: 17px 18px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.oai-metrics article.oai-hero-metric {
+  border-color: #cbdafe;
+  background: var(--primary-soft);
+}
+
+.oai-metrics article > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.oai-metrics strong {
+  display: block;
+  margin-top: 11px;
+  font-size: 27px;
+  line-height: 1;
+  letter-spacing: -0.035em;
+}
+
+.oai-hero-metric strong {
+  color: var(--primary);
+  font-size: 34px;
+}
+
+.oai-metrics strong small {
+  font-size: 13px;
+  letter-spacing: 0;
+}
+
+.oai-metrics p {
+  margin: 10px 0 0;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.oai-chart-panel,
+.oai-table-panel {
+  overflow: hidden;
+}
+
+.oai-chart-wrap {
+  position: relative;
+  min-height: 250px;
+}
+
+.oai-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 300px;
+}
+
+.oai-chart-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.oai-chart-axis {
+  fill: var(--faint);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.oai-chart-line {
+  fill: none;
+  stroke: var(--primary);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.oai-chart-cursor {
+  stroke: var(--text);
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+  opacity: 0.48;
+}
+
+.oai-chart-point {
+  fill: var(--surface);
+  stroke: var(--primary);
+  stroke-width: 3;
+}
+
+.oai-chart-label {
+  position: absolute;
+  top: 8px;
+  left: 54px;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.oai-playback {
+  gap: 9px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.primary-button.oai-play-button {
+  min-height: 42px;
+  padding: 9px 15px;
+  border: 1px solid var(--primary);
+  border-radius: 7px;
+  background: var(--primary);
+  color: #fff;
+  font-weight: 750;
+}
+
+.primary-button.oai-play-button:disabled {
+  opacity: 0.5;
+}
+
+.oai-range-label {
+  display: grid;
+  grid-template-columns: auto minmax(160px, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-width: 240px;
+  flex: 1;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.oai-range-label input {
+  width: 100%;
+  accent-color: var(--primary);
+}
+
+.oai-speed-label {
+  grid-template-columns: auto 78px;
+  align-items: center;
+}
+
+.oai-table-wrap {
+  max-height: 430px;
+  overflow: auto;
+}
+
+.oai-table-wrap th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  white-space: nowrap;
+  background: var(--surface-subtle);
+}
+
+.oai-table-wrap td {
+  white-space: nowrap;
+  text-align: right;
+}
+
+.oai-table-wrap th:not(:first-child) {
+  text-align: right;
+}
+
+.oai-table-wrap tbody tr {
+  transition: background-color 120ms ease;
+}
+
+.oai-table-wrap tbody tr:hover {
+  background: var(--surface-blue);
+}
+
+.oai-boundary-note {
+  margin: 0;
+  padding: 14px 16px;
+  border: 1px solid #ead8b9;
+  border-radius: 9px;
+  background: var(--warning-soft);
+  color: #70420a;
+  font-size: 13px;
+}
+
+.oai-state {
+  min-height: 260px;
+  display: grid;
+  place-content: center;
+  text-align: center;
+}
+
+.oai-state h2,
+.oai-state p {
+  margin: 0;
+}
+
+.oai-state p {
+  margin-top: 8px;
+  color: var(--muted);
+}
+
+@media (max-width: 980px) {
+  .masthead-top {
+    align-items: flex-start;
+  }
+
+  .masthead-actions {
+    align-items: flex-end;
+    flex-direction: column-reverse;
+  }
+
+  .oai-source-strip {
+    grid-template-columns: 1fr auto;
+  }
+
+  .oai-source-strip dl {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .oai-control-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .oai-filter-context {
+    grid-column: 1 / 2;
+    padding: 8px 0 0;
+    border-top: 1px solid var(--border);
+    border-left: 0;
+  }
+
+  .oai-export-button {
+    align-self: end;
+  }
+
+  .oai-metrics {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .oai-network-path .node-symbol {
+    width: 52px;
+    height: 52px;
+  }
+}
+
+@media (max-width: 680px) {
+  .masthead-top,
+  .masthead-actions {
+    align-items: stretch;
+  }
+
+  .masthead-actions {
+    width: 100%;
+  }
+
+  .surface-nav {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .mode-badge.archive {
+    align-self: flex-start;
+  }
+
+  .oai-header-provenance {
+    display: none;
+  }
+
+  .oai-source-strip,
+  .oai-control-row,
+  .oai-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .oai-source-strip dl,
+  .oai-filter-context {
+    grid-column: auto;
+  }
+
+  .oai-source-link {
+    width: 100%;
+  }
+
+  .oai-export-button {
+    width: 100%;
+  }
+
+  .oai-metrics article {
+    min-height: 106px;
+  }
+
+  .oai-playback {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .oai-playback > button {
+    flex: 1;
+  }
+
+  .oai-network-path {
+    overflow-x: auto;
+    padding-bottom: 16px;
+  }
+
+  .oai-network-path li {
+    min-width: 94px;
+  }
+
+  .oai-measurement-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .oai-measurement-grid .measurement {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .oai-measurement-grid .measurement:last-child {
+    border-bottom: 0;
+  }
+
+  .oai-range-label,
+  .oai-speed-label {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .surface-nav button,
+  .oai-table-wrap tbody tr {
+    transition: none;
+  }
+}
+
 .load-scenario {
   width: 168px;
+}
+
+.load-source-readonly {
+  display: flex;
+  align-items: center;
+  width: min(280px, 100%);
+  color: #294f91;
+  font-size: 12.5px;
 }
 
 .load-button {

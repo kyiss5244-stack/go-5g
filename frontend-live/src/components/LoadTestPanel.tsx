@@ -7,7 +7,7 @@ import { SCENARIOS, type Scenario } from '../api';
 
 export type LoadRunState = {
   runId: string;
-  scenario: Scenario;
+  scenario: string;
   concurrency: number;
   running: boolean;
   total: number;
@@ -60,6 +60,7 @@ type Props = {
   onStart: () => void;
   disabled: boolean;
   demo: boolean;
+  sourceLabel?: string;
 };
 
 // 从当前状态实时推导 6 个统计瓦片的数值（运行时用墙钟，结束后用 finishedAt）。
@@ -159,30 +160,30 @@ function exportRunCsv(state: LoadRunState): void {
   URL.revokeObjectURL(url);
 }
 
-export function LoadTestPanel({ state, runs, inputs, scenario, onInput, onScenario, onStart, disabled, demo }: Props) {
+export function LoadTestPanel({ state, runs, inputs, scenario, onInput, onScenario, onStart, disabled, demo, sourceLabel }: Props) {
   const controlsDisabled = disabled || !!state?.running;
 
   return (
     <div className="load-panel">
       <div className="load-form">
-        <label htmlFor="load-scenario">压测信道模型</label>
-        <select
-          id="load-scenario"
-          className="field load-scenario"
-          value={scenario}
-          aria-describedby="load-scenario-help"
-          disabled={controlsDisabled}
-          onChange={(event) => {
-            const value = event.target.value as Scenario;
-            if (Object.hasOwn(SCENARIOS, value)) onScenario(value);
-          }}
-        >
-          {Object.entries(SCENARIOS).map(([key, value]) => (
-            <option key={key} value={key}>
-              {value.label}
-            </option>
-          ))}
-        </select>
+        <label htmlFor="load-scenario">压测输入</label>
+        {sourceLabel ? (
+          <div id="load-scenario" className="field load-scenario load-source-readonly" aria-describedby="load-scenario-help">{sourceLabel}</div>
+        ) : (
+          <select
+            id="load-scenario"
+            className="field load-scenario"
+            value={scenario}
+            aria-describedby="load-scenario-help"
+            disabled={controlsDisabled}
+            onChange={(event) => {
+              const value = event.target.value as Scenario;
+              if (Object.hasOwn(SCENARIOS, value)) onScenario(value);
+            }}
+          >
+            {Object.entries(SCENARIOS).map(([key, value]) => <option key={key} value={key}>{value.label}</option>)}
+          </select>
+        )}
         <label htmlFor="load-concurrency">并发数（1–50）</label>
         <input
           id="load-concurrency"
@@ -210,7 +211,7 @@ export function LoadTestPanel({ state, runs, inputs, scenario, onInput, onScenar
           </button>
         )}
         <p className="field-help" id="load-scenario-help">
-          {SCENARIOS[scenario].description} 此选择仅用于压测，不会改变上方单次注册的信道模型。结束后自动逐个注销清理。
+          {sourceLabel ? `${sourceLabel}；所有压测请求复用这条记录的 SINR 和实验信号功率。` : `${SCENARIOS[scenario].description} 此选择仅用于压测，不会改变上方单次注册的信道模型。`} 结束后自动逐个注销清理。
         </p>
       </div>
       {demo && <p className="hint">演示模式下不发真实请求——压测需要连上后端，等页面自动切回实时模式再试。</p>}
